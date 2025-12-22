@@ -1,0 +1,372 @@
+data:
+  ml1m_ratings: D:\WorkSpace\pycharm\Python学习路线\recommender_project\data\movielens\ml-1m\ratings.dat
+  dataset_name: ml1m
+paths:
+  hybrid_ckpt: hybrid_ml1m_best.pth
+  hybrid_ckpt_safe: hybrid_ml1m_best_safe.pth
+  lightgcn_ckpt: lightgcn_ml1m_best.pth
+  ngcf_ckpt: ngcf_ml1m_best.pth
+  mmgcn_ckpt: mmgcn_ml1m_best.pth
+  svdpp_ckpt: svdpp_ml1m_best.pth
+  multivae_ckpt: multivae_ml1m_best.pth
+  din_ckpt: din_ml1m_best.pth
+  results_v3_csv: results_v3_ml1m_rerank.csv
+  artifacts_root: artifacts
+  figures_root: figures_v3
+  features_dir: data/features
+  ml1m_text_emb: data/features/ml1m_text_embeddings_64.npy
+  ml1m_text_index: data/features/ml1m_text_index.csv
+  ml1m_image_emb: data/features/ml1m_image_embeddings_64.npy
+  ml1m_image_index: data/features/ml1m_image_index.csv
+  hybrid_acc_ckpt: hybrid_acc_ml1m_best.pth
+  hybrid_acc_ckpt_safe: hybrid_acc_ml1m_best_safe.pth
+  hybrid_tail_ckpt: hybrid_tail_ml1m_best.pth
+  hybrid_tail_ckpt_safe: hybrid_tail_ml1m_best_safe.pth
+model:
+  mf_dim: 32
+  mlp_layers:
+  - 64
+  - 32
+  dropout: 0.0
+  gmf_dim: 32
+  mlp_dim: 128
+  content_proj_dim: 128
+  hybrid_dropout: 0.1
+train:
+  batch_size: 2048
+  lr: 0.001
+  epochs: 20
+  weight_decay: 0.0
+  device: cuda
+  seed: 42
+  grad_clip: 5.0
+  num_workers: 0
+  warmup_epochs: 5
+  patience: 5
+  min_delta: 0.0001
+  log_every: 200
+  amp: true
+hybrid:
+  gmf_dim: 32
+  mlp_dim: 128
+  content_proj_dim: 128
+  mlp_layer_sizes:
+  - 512
+  - 256
+  - 128
+  dropout: 0.1
+  use_text: true
+  use_image: true
+  use_history: true
+  max_hist_len: 50
+  n_heads: 4
+  n_transformer_layers: 2
+  num_neg: 4
+  lambda_rating: 1.0
+  lambda_bpr: 0.5
+  lambda_align: 0.05
+  align_temperature: 0.2
+  rating_min: 1.0
+  rating_max: 5.0
+eval_v3_rerank:
+  candidate_N: 200
+  topK: 10
+  weights:
+    w_rel: 1.0
+    w_novel: 0.15
+    w_tail: 0.15
+    w_div: 0.25
+    cold_boost: 2.0
+    hist_ref: 50
+tune_v3_rerank:
+  K: 10
+  topN: 200
+  normalize: minmax
+  div_mode: max
+  w_rel_list:
+  - 0.7
+  - 0.8
+  - 0.85
+  - 0.9
+  - 0.95
+  w_div_list:
+  - 0.0
+  - 0.03
+  - 0.05
+  - 0.08
+  w_nov_list:
+  - 0.0
+  - 0.03
+  - 0.05
+  - 0.08
+  defaults:
+    rel_mode: raw
+    anchor_L: 0
+  overrides:
+    HybridNCF-Rerank:
+      rel_mode: rank
+      anchor_L: 3
+    DIN-Rerank:
+      rel_mode: rank
+      anchor_L: 3
+    HybridAcc-Rerank:
+      rel_mode: rank
+      anchor_L: 3
+    HybridTail-Rerank:
+      rel_mode: rank
+      anchor_L: 3
+plot_v3:
+  k_list:
+  - 5
+  - 10
+  - 20
+  metrics:
+  - Recall
+  - NDCG
+  - Coverage
+  - LongTailShare
+  - Novelty
+  dpi: 300
+rerank:
+  weights:
+    w_rel: 0.92
+    w_novel: 0.02
+    w_tail: 0.02
+    w_div: 0.04
+    cold_boost: 2.0
+    hist_ref: 50
+  per_model:
+    LightGCN-Rerank:
+      w_rel: 0.9
+      w_novel: 0.05
+      w_tail: 0.019999999999999976
+      w_div: 0.03
+      cold_boost: 2.0
+      hist_ref: 50
+      tuned_on: val
+      objective: NDCG
+      val_recall: 0.07417218543046358
+      val_ndcg: 0.03581259298007706
+      val_coverage: 0.33702104695089047
+      val_longtail: 0.013956953642384105
+      val_novelty: 9.459124335704995
+      updated_at: '2025-12-22 17:24:53'
+      test_recall: 0.06390728476821192
+      test_ndcg: 0.03226761650885932
+      test_coverage: 0.3378305450620615
+      test_longtail: 0.013973509933774834
+      test_novelty: 9.460677684500832
+    MultiVAE-Rerank: &id001
+      w_rel: 0.96
+      w_div: 0.02
+      w_novel: 0.01
+      w_tail: 0.01
+    SVDPP-Rerank: &id002
+      w_rel: 1.0
+      w_div: 0.0
+      w_novel: 0.0
+      w_tail: 0.0
+    DIN-Rerank: &id003
+      w_rel: 1.0
+      w_div: 0.0
+      w_novel: 0.0
+      w_tail: 0.0
+    NGCF-Rerank:
+      w_rel: 0.95
+      w_novel: 0.05
+      w_tail: 4.163336342344337e-17
+      w_div: 0.0
+      cold_boost: 2.0
+      hist_ref: 50
+      tuned_on: val
+      objective: NDCG
+      val_recall: 0.07334437086092715
+      val_ndcg: 0.03572098552171965
+      val_coverage: 0.478143550998381
+      val_longtail: 0.03983443708609272
+      val_novelty: 9.768662997663741
+      updated_at: '2025-12-22 18:14:13'
+      test_recall: 0.06970198675496689
+      test_ndcg: 0.03517596997205447
+      test_coverage: 0.4786832164058284
+      test_longtail: 0.03993377483443709
+      test_novelty: 9.770046505455708
+    MMGCN-Rerank:
+      w_rel: 0.85
+      w_novel: 0.08
+      w_tail: 0.020000000000000018
+      w_div: 0.05
+      cold_boost: 2.0
+      hist_ref: 50
+      tuned_on: val
+      objective: NDCG
+      val_recall: 0.07268211920529802
+      val_ndcg: 0.035652590992052265
+      val_coverage: 0.34943335132218023
+      val_longtail: 0.015397350993377483
+      val_novelty: 9.493718898096628
+      updated_at: '2025-12-22 18:56:50'
+      test_recall: 0.06490066225165562
+      test_ndcg: 0.03292616121439241
+      test_coverage: 0.34970318402590395
+      test_longtail: 0.015397350993377483
+      test_novelty: 9.495086068150481
+    HybridNCF-Rerank:
+      w_rel: 0.95
+      w_novel: 0.05
+      w_tail: 4.163336342344337e-17
+      w_div: 0.0
+      cold_boost: 2.0
+      hist_ref: 50
+      tuned_on: val
+      objective: NDCG
+      val_recall: 0.040894039735099336
+      val_ndcg: 0.020599886196461126
+      val_coverage: 0.1743119266055046
+      val_longtail: 0.027334437086092716
+      val_novelty: 9.530593119221448
+      updated_at: '2025-12-22 14:53:51'
+      test_recall: 0.033112582781456956
+      test_ndcg: 0.015597320861866422
+      test_coverage: 0.1743119266055046
+      test_longtail: 0.02740066225165563
+      test_novelty: 9.532347690491122
+  default_weights:
+    w_rel: 0.92
+    w_novel: 0.02
+    w_tail: 0.02
+    w_div: 0.04
+    cold_boost: 2.0
+    hist_ref: 50
+  per_model_weights:
+    LightGCN-Rerank:
+      w_rel: 0.9
+      w_novel: 0.05
+      w_tail: 0.019999999999999976
+      w_div: 0.03
+      cold_boost: 2.0
+      hist_ref: 50
+      tuned_on: val
+      objective: NDCG
+      val_recall: 0.07417218543046358
+      val_ndcg: 0.03581259298007706
+      val_coverage: 0.33702104695089047
+      val_longtail: 0.013956953642384105
+      val_novelty: 9.459124335704995
+      updated_at: '2025-12-22 17:24:53'
+      test_recall: 0.06390728476821192
+      test_ndcg: 0.03226761650885932
+      test_coverage: 0.3378305450620615
+      test_longtail: 0.013973509933774834
+      test_novelty: 9.460677684500832
+    MultiVAE-Rerank: *id001
+    SVDPP-Rerank: *id002
+    DIN-Rerank: *id003
+    NGCF-Rerank:
+      w_rel: 0.95
+      w_novel: 0.05
+      w_tail: 4.163336342344337e-17
+      w_div: 0.0
+      cold_boost: 2.0
+      hist_ref: 50
+      tuned_on: val
+      objective: NDCG
+      val_recall: 0.07334437086092715
+      val_ndcg: 0.03572098552171965
+      val_coverage: 0.478143550998381
+      val_longtail: 0.03983443708609272
+      val_novelty: 9.768662997663741
+      updated_at: '2025-12-22 18:14:13'
+      test_recall: 0.06970198675496689
+      test_ndcg: 0.03517596997205447
+      test_coverage: 0.4786832164058284
+      test_longtail: 0.03993377483443709
+      test_novelty: 9.770046505455708
+    MMGCN-Rerank:
+      w_rel: 0.85
+      w_novel: 0.08
+      w_tail: 0.020000000000000018
+      w_div: 0.05
+      cold_boost: 2.0
+      hist_ref: 50
+      tuned_on: val
+      objective: NDCG
+      val_recall: 0.07268211920529802
+      val_ndcg: 0.035652590992052265
+      val_coverage: 0.34943335132218023
+      val_longtail: 0.015397350993377483
+      val_novelty: 9.493718898096628
+      updated_at: '2025-12-22 18:56:50'
+      test_recall: 0.06490066225165562
+      test_ndcg: 0.03292616121439241
+      test_coverage: 0.34970318402590395
+      test_longtail: 0.015397350993377483
+      test_novelty: 9.495086068150481
+    HybridNCF-Rerank:
+      w_rel: 0.95
+      w_novel: 0.05
+      w_tail: 4.163336342344337e-17
+      w_div: 0.0
+      cold_boost: 2.0
+      hist_ref: 50
+      tuned_on: val
+      objective: NDCG
+      val_recall: 0.040894039735099336
+      val_ndcg: 0.020599886196461126
+      val_coverage: 0.1743119266055046
+      val_longtail: 0.027334437086092716
+      val_novelty: 9.530593119221448
+      updated_at: '2025-12-22 14:53:51'
+      test_recall: 0.033112582781456956
+      test_ndcg: 0.015597320861866422
+      test_coverage: 0.1743119266055046
+      test_longtail: 0.02740066225165563
+      test_novelty: 9.532347690491122
+  tune: {}
+hybrid_acc:
+  gmf_dim: 32
+  mlp_dim: 128
+  content_proj_dim: 128
+  mlp_layer_sizes:
+  - 512
+  - 256
+  - 128
+  dropout: 0.1
+  use_text: true
+  use_image: true
+  use_history: true
+  max_hist_len: 50
+  n_heads: 4
+  n_transformer_layers: 2
+  num_neg: 4
+  lambda_rating: 1.0
+  lambda_bpr: 0.5
+  lambda_align: 0.05
+  align_temperature: 0.2
+  rating_min: 1.0
+  rating_max: 5.0
+  align_max_batch: 256
+hybrid_tail:
+  gmf_dim: 32
+  mlp_dim: 128
+  content_proj_dim: 128
+  mlp_layer_sizes:
+  - 512
+  - 256
+  - 128
+  dropout: 0.1
+  use_text: true
+  use_image: true
+  use_history: true
+  max_hist_len: 50
+  n_heads: 4
+  n_transformer_layers: 2
+  num_neg: 4
+  lambda_rating: 1.0
+  lambda_bpr: 0.5
+  lambda_align: 0.05
+  align_temperature: 0.2
+  rating_min: 1.0
+  rating_max: 5.0
+  pop_alpha: 0.3
+  pop_mode: log_norm
