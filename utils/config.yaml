@@ -68,6 +68,13 @@ hybrid:
   align_temperature: 0.2
   rating_min: 1.0
   rating_max: 5.0
+  pop_alpha: 0.3
+  pop_mode: log_norm
+  learnable_pop_alpha: false
+  user_pop_scaling: true
+  user_pop_scale_range:
+  - 0.5
+  - 1.5
 eval_v3_rerank:
   candidate_N: 200
   topK: 10
@@ -370,3 +377,8 @@ hybrid_tail:
   rating_max: 5.0
   pop_alpha: 0.3
   pop_mode: log_norm
+  learnable_pop_alpha: false
+  user_pop_scaling: true
+  user_pop_scale_range:
+  - 0.5
+  - 1.5

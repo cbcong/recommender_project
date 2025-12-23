@@ -42,6 +42,8 @@ class HybridNCF(nn.Module):
         max_hist_len: int = 50,
         n_heads: int = 4,
         n_transformer_layers: int = 2,
+        modal_attn_heads: int = 2,
+        modal_attn_dropout: float = 0.0,
         rating_min: float = 1.0,
         rating_max: float = 5.0,
         global_mean: float = 0.0,
@@ -89,9 +91,22 @@ class HybridNCF(nn.Module):
                 nn.Linear(mlp_dim, self.n_modal),
             )
             self.modal_ln = nn.LayerNorm(content_proj_dim)
+
+            # 多模态注意力：让内容融合随用户/物品上下文自适应分配权重（SCI 级别增强）
+            self.modal_attn_q = nn.Linear(mlp_dim * 2, content_proj_dim)
+            self.modal_attn = nn.MultiheadAttention(
+                embed_dim=content_proj_dim,
+                num_heads=max(1, int(modal_attn_heads)),
+                dropout=float(modal_attn_dropout),
+                batch_first=True,
+            )
+            self.modal_attn_ln = nn.LayerNorm(content_proj_dim)
         else:
             self.modal_gate = None
             self.modal_ln = None
+            self.modal_attn_q = None
+            self.modal_attn = None
+            self.modal_attn_ln = None
 
         self.content_to_mlp = None
         if self.has_modal and content_proj_dim != mlp_dim:
@@ -262,13 +277,22 @@ class HybridNCF(nn.Module):
             experts.append(self.image_proj(content_raw[:, self.text_dim : self.text_dim + self.image_dim]))
 
         gate_in = torch.cat([u_mlp, i_mlp], dim=-1)
-        modal_w = F.softmax(self.modal_gate(gate_in), dim=-1)
-        gates["modal_w"] = modal_w
 
-        content_shared = 0.0
-        for k, ex in enumerate(experts):
-            content_shared = content_shared + modal_w[:, k:k + 1] * ex
-        content_shared = self.modal_ln(content_shared)
+        # 注意力融合（多模态内容）
+        if self.modal_attn is not None and len(experts) > 1:
+            expert_stack = torch.stack(experts, dim=1)  # [B, M, D]
+            q = self.modal_attn_q(gate_in).unsqueeze(1)  # [B,1,D]
+            attn_out, attn_w = self.modal_attn(q, expert_stack, expert_stack, need_weights=True)
+            content_shared = self.modal_attn_ln(attn_out.squeeze(1))
+            gates["modal_attn_w"] = attn_w.squeeze(1)  # [B, M]
+        else:
+            modal_w = F.softmax(self.modal_gate(gate_in), dim=-1)
+            gates["modal_w"] = modal_w
+
+            content_shared = 0.0
+            for k, ex in enumerate(experts):
+                content_shared = content_shared + modal_w[:, k:k + 1] * ex
+            content_shared = self.modal_ln(content_shared)
 
         content_to_mlp = content_shared
         if self.content_to_mlp is not None:
