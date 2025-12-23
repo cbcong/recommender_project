@@ -270,10 +270,18 @@ def compute_metrics_topk(
     item_popularity: np.ndarray,
     tail_mask: np.ndarray,
     K: int,
+    item_vectors: Optional[np.ndarray] = None,
 ) -> Dict[str, float]:
     users = list(user_pos.keys())
     if len(users) == 0:
-        return {"Recall": 0.0, "NDCG": 0.0, "Coverage": 0.0, "LongTailShare": 0.0, "Novelty": 0.0}
+        return {
+            "Recall": 0.0,
+            "NDCG": 0.0,
+            "Coverage": 0.0,
+            "LongTailShare": 0.0,
+            "Novelty": 0.0,
+            "ILAD": 0.0,
+        }
 
     hits = 0
     total = 0
@@ -287,6 +295,11 @@ def compute_metrics_topk(
 
     lt_cnt, rec_cnt = 0, 0
     nov_sum, nov_cnt = 0.0, 0
+    ilad_sum, ilad_users = 0.0, 0
+
+    vec = None
+    if item_vectors is not None and item_vectors.size > 0:
+        vec = item_vectors
 
     for u in users:
         gt = user_pos[u]
@@ -309,13 +322,32 @@ def compute_metrics_topk(
                 nov_sum += float(info[it])
                 nov_cnt += 1
 
+        if vec is not None and len(rK) > 1:
+            emb = vec[rK]
+            sim = emb @ emb.T
+            m = sim.shape[0]
+            triu_idx = np.triu_indices(m, k=1)
+            pair_sim = sim[triu_idx]
+            pair_div = 1.0 - pair_sim
+            ilad_sum += float(pair_div.mean())
+            ilad_users += 1
+
     recall = hits / total if total > 0 else 0.0
     ndcg = ndcg_sum / float(len(users)) if len(users) > 0 else 0.0
     coverage = len(all_items) / float(n_items) if n_items > 0 else 0.0
     longtail = lt_cnt / float(rec_cnt) if rec_cnt > 0 else 0.0
     novelty = nov_sum / float(nov_cnt) if nov_cnt > 0 else 0.0
 
-    return {"Recall": recall, "NDCG": ndcg, "Coverage": coverage, "LongTailShare": longtail, "Novelty": novelty}
+    ilad = ilad_sum / float(ilad_users) if ilad_users > 0 else 0.0
+
+    return {
+        "Recall": recall,
+        "NDCG": ndcg,
+        "Coverage": coverage,
+        "LongTailShare": longtail,
+        "Novelty": novelty,
+        "ILAD": ilad,
+    }
 
 
 # =========================================================
@@ -427,6 +459,11 @@ def prepare_ml1m_data(device: str):
     tail_mask = build_long_tail_mask(item_pop, head_ratio=0.8)
     global_mean = float(train_df["rating"].mean()) if "rating" in train_df.columns else 0.0
 
+    item_vectors = load_item_vectors_aligned_ml1m(cfg, n_items=n_items, item2idx=item2idx)
+    norms = np.linalg.norm(item_vectors, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    item_vectors_norm = item_vectors / norms
+
     return {
         "cfg_path": cfg_path,
         "cfg": cfg,
@@ -451,6 +488,8 @@ def prepare_ml1m_data(device: str):
         "train_u": train_df["user_idx"].values,
         "train_i": train_df["item_idx"].values,
         "device": device,
+        "item_vectors": item_vectors,
+        "item_vectors_norm": item_vectors_norm,
     }
 
 
@@ -735,6 +774,11 @@ def load_hybrid_tail_robust(path: str, cfg: dict, ratings_path: str, device: str
 
     pop_alpha = float(ckpt.get("pop_alpha", hycfg.get("pop_alpha", 0.30)))
     pop_mode = str(ckpt.get("pop_mode", hycfg.get("pop_mode", "log_norm")))
+    learnable_pop_alpha = bool(ckpt.get("learnable_pop_alpha", hycfg.get("learnable_pop_alpha", False)))
+    user_pop_scaling = bool(ckpt.get("user_pop_scaling", hycfg.get("user_pop_scaling", False)))
+    user_pop_scale_range = ckpt.get("user_pop_scale_range", hycfg.get("user_pop_scale_range", (0.5, 1.5)))
+    if not isinstance(user_pop_scale_range, (list, tuple)) or len(user_pop_scale_range) != 2:
+        user_pop_scale_range = (0.5, 1.5)
 
     mlp_layer_sizes = hycfg.get("mlp_layer_sizes", (512, 256, 128))
     if isinstance(mlp_layer_sizes, list):
@@ -778,6 +822,9 @@ def load_hybrid_tail_robust(path: str, cfg: dict, ratings_path: str, device: str
         item_popularity=item_popularity,
         pop_alpha=pop_alpha,
         pop_mode=pop_mode,
+        learnable_pop_alpha=learnable_pop_alpha,
+        user_pop_scaling=user_pop_scaling,
+        user_pop_scale_range=tuple(float(x) for x in user_pop_scale_range),
     ).to(device)
 
     model.load_state_dict(state, strict=False)
@@ -1096,7 +1143,7 @@ def rerank_all_users(
 
 def select_best_by_val(rows: List[dict]) -> dict:
     """
-    目标：最大化 val_NDCG，其次 val_Recall，再其次 val_Coverage（更稳）
+    目标：最大化 val_NDCG，其次 val_Recall，再次覆盖与多样性（ILAD）
     """
     if not rows:
         raise ValueError("No tuning rows to select from.")
@@ -1106,6 +1153,7 @@ def select_best_by_val(rows: List[dict]) -> dict:
             float(r.get("val_NDCG", 0.0)),
             float(r.get("val_Recall", 0.0)),
             float(r.get("val_Coverage", 0.0)),
+            float(r.get("val_ILAD", 0.0)),
         )
 
     return max(rows, key=key_fn)
@@ -1165,7 +1213,15 @@ def main():
         recs = {}
         for u in users:
             recs[u] = topn_items_by_user[u][:K].tolist()
-        return compute_metrics_topk(recs, user_pos=user_pos, n_items=n_items, item_popularity=item_pop, tail_mask=tail_mask, K=K)
+        return compute_metrics_topk(
+            recs,
+            user_pos=user_pos,
+            n_items=n_items,
+            item_popularity=item_pop,
+            tail_mask=tail_mask,
+            K=K,
+            item_vectors=meta["item_vectors_norm"],
+        )
 
     # ---------- tune one model ----------
     def tune_one_model(
@@ -1181,8 +1237,8 @@ def main():
 
         base_val = eval_base_topk_from_topn(topn_items_val, val_users, meta["val_user_pos"])
         base_test = eval_base_topk_from_topn(topn_items_test, test_users, meta["test_user_pos"])
-        print(f"[{model_tag}-Base][VAL]  Recall={base_val['Recall']:.4f} NDCG={base_val['NDCG']:.4f} Cov={base_val['Coverage']:.4f} LT={base_val['LongTailShare']:.4f} Nov={base_val['Novelty']:.3f}")
-        print(f"[{model_tag}-Base][TEST] Recall={base_test['Recall']:.4f} NDCG={base_test['NDCG']:.4f} Cov={base_test['Coverage']:.4f} LT={base_test['LongTailShare']:.4f} Nov={base_test['Novelty']:.3f}")
+        print(f"[{model_tag}-Base][VAL]  Recall={base_val['Recall']:.4f} NDCG={base_val['NDCG']:.4f} Cov={base_val['Coverage']:.4f} LT={base_val['LongTailShare']:.4f} Nov={base_val['Novelty']:.3f} ILAD={base_val['ILAD']:.4f}")
+        print(f"[{model_tag}-Base][TEST] Recall={base_test['Recall']:.4f} NDCG={base_test['NDCG']:.4f} Cov={base_test['Coverage']:.4f} LT={base_test['LongTailShare']:.4f} Nov={base_test['Novelty']:.3f} ILAD={base_test['ILAD']:.4f}")
 
         rows = []
         t0_all = time.time()
@@ -1221,6 +1277,7 @@ def main():
                         item_popularity=item_pop,
                         tail_mask=tail_mask,
                         K=K,
+                        item_vectors=meta["item_vectors_norm"],
                     )
                     dt = time.time() - t0
                     combo_cnt += 1
@@ -1240,6 +1297,7 @@ def main():
                         "val_Coverage": float(m_val["Coverage"]),
                         "val_LongTailShare": float(m_val["LongTailShare"]),
                         "val_Novelty": float(m_val["Novelty"]),
+                        "val_ILAD": float(m_val["ILAD"]),
                         "seconds_val": float(dt),
                     }
                     rows.append(row)
@@ -1248,7 +1306,7 @@ def main():
                         f"[{model_tag}][VAL] "
                         f"w_rel={w_rel:.2f} w_div={w_div:.2f} w_nov={w_nov:.2f} w_tail={w_tail:.2f} | "
                         f"Recall={m_val['Recall']:.4f} NDCG={m_val['NDCG']:.4f} "
-                        f"Cov={m_val['Coverage']:.4f} LT={m_val['LongTailShare']:.4f} Nov={m_val['Novelty']:.3f} "
+                        f"Cov={m_val['Coverage']:.4f} LT={m_val['LongTailShare']:.4f} Nov={m_val['Novelty']:.3f} ILAD={m_val['ILAD']:.4f} "
                         f"({dt:.1f}s)"
                     )
 
@@ -1286,11 +1344,12 @@ def main():
             item_popularity=item_pop,
             tail_mask=tail_mask,
             K=K,
+            item_vectors=meta["item_vectors_norm"],
         )
 
         print(f"\n[{model_tag}] BEST (by VAL NDCG) => w_rel={best_w['w_rel']:.2f} w_div={best_w['w_div']:.2f} w_nov={best_w['w_novel']:.2f} w_tail={best_w['w_tail']:.2f}")
-        print(f"[{model_tag}-BEST][VAL]  Recall={best['val_Recall']:.4f} NDCG={best['val_NDCG']:.4f} Cov={best['val_Coverage']:.4f} LT={best['val_LongTailShare']:.4f} Nov={best['val_Novelty']:.3f}")
-        print(f"[{model_tag}-BEST][TEST] Recall={m_test['Recall']:.4f} NDCG={m_test['NDCG']:.4f} Cov={m_test['Coverage']:.4f} LT={m_test['LongTailShare']:.4f} Nov={m_test['Novelty']:.3f}")
+        print(f"[{model_tag}-BEST][VAL]  Recall={best['val_Recall']:.4f} NDCG={best['val_NDCG']:.4f} Cov={best['val_Coverage']:.4f} LT={best['val_LongTailShare']:.4f} Nov={best['val_Novelty']:.3f} ILAD={best.get('val_ILAD',0.0):.4f}")
+        print(f"[{model_tag}-BEST][TEST] Recall={m_test['Recall']:.4f} NDCG={m_test['NDCG']:.4f} Cov={m_test['Coverage']:.4f} LT={m_test['LongTailShare']:.4f} Nov={m_test['Novelty']:.3f} ILAD={m_test['ILAD']:.4f}")
 
         write_back_best_weights(
             cfg_path=cfg_path,
