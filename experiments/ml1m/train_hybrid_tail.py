@@ -328,6 +328,16 @@ def main():
     # Tail 关键：pop penalty
     pop_alpha = float(hy.get("pop_alpha", 0.30))
     pop_mode = str(hy.get("pop_mode", "log_norm"))
+    learnable_pop_alpha = bool(hy.get("learnable_pop_alpha", False))
+    user_pop_scaling = bool(hy.get("user_pop_scaling", False))
+    user_pop_scale_range = hy.get("user_pop_scale_range", (0.5, 1.5))
+    if not isinstance(user_pop_scale_range, (list, tuple)) or len(user_pop_scale_range) != 2:
+        user_pop_scale_range = (0.5, 1.5)
+    print(
+        f"[Tail cfg] pop_alpha={pop_alpha} (learnable={learnable_pop_alpha}), "
+        f"pop_mode={pop_mode}, user_pop_scaling={user_pop_scaling}, "
+        f"user_pop_scale_range={tuple(float(x) for x in user_pop_scale_range)}"
+    )
 
     rating_min = float(hy.get("rating_min", 1.0))
     rating_max = float(hy.get("rating_max", 5.0))
@@ -364,6 +374,9 @@ def main():
         item_popularity=item_pop_train,
         pop_alpha=pop_alpha,
         pop_mode=pop_mode,
+        learnable_pop_alpha=learnable_pop_alpha,
+        user_pop_scaling=user_pop_scaling,
+        user_pop_scale_range=tuple(float(x) for x in user_pop_scale_range),
     ).to(device)
 
     # history tensors（上 GPU）
@@ -467,6 +480,9 @@ def main():
         "item_pop_train": item_pop_train,
         "pop_alpha": float(pop_alpha),
         "pop_mode": str(pop_mode),
+        "learnable_pop_alpha": bool(learnable_pop_alpha),
+        "user_pop_scaling": bool(user_pop_scaling),
+        "user_pop_scale_range": tuple(float(x) for x in user_pop_scale_range),
     }
     payload_safe = {"state_dict": model.state_dict()}
 
