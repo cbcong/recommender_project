@@ -191,6 +191,36 @@ def compute_novelty(recs: Dict[int, List[int]], item_popularity: np.ndarray) -> 
     return s / float(n) if n > 0 else 0.0
 
 
+def compute_ilad(recs: Dict[int, List[int]], item_vectors: np.ndarray, k: int) -> float:
+    """
+    Intra-List Average Diversity（余弦距离），k 取 Top-K。
+    """
+    if item_vectors is None or item_vectors.size == 0:
+        return 0.0
+
+    # 归一化向量，避免重复归一化开销
+    vec = item_vectors.astype("float32")
+    norms = np.linalg.norm(vec, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    vec = vec / norms
+
+    total_div, user_cnt = 0.0, 0
+    for items in recs.values():
+        subset = items[:k]
+        if len(subset) <= 1:
+            continue
+        emb = vec[subset]
+        sim = emb @ emb.T  # [m,m]
+        # 只取上三角非对角线
+        m = sim.shape[0]
+        triu_idx = np.triu_indices(m, k=1)
+        pair_sim = sim[triu_idx]
+        pair_div = 1.0 - pair_sim
+        total_div += float(pair_div.mean())
+        user_cnt += 1
+    return total_div / float(user_cnt) if user_cnt > 0 else 0.0
+
+
 def evaluate_hit_rate_at_n(cand_items: Dict[int, List[int]], test_user_pos: Dict[int, set], N: int) -> float:
     hit, cnt = 0, 0
     for u, gt in test_user_pos.items():
@@ -712,6 +742,11 @@ def load_hybrid_tail_robust(
 
     pop_alpha = float(ckpt.get("pop_alpha", hycfg.get("pop_alpha", 0.30)))
     pop_mode = str(ckpt.get("pop_mode", hycfg.get("pop_mode", "log_norm")))
+    learnable_pop_alpha = bool(ckpt.get("learnable_pop_alpha", hycfg.get("learnable_pop_alpha", False)))
+    user_pop_scaling = bool(ckpt.get("user_pop_scaling", hycfg.get("user_pop_scaling", False)))
+    user_pop_scale_range = ckpt.get("user_pop_scale_range", hycfg.get("user_pop_scale_range", (0.5, 1.5)))
+    if not isinstance(user_pop_scale_range, (list, tuple)) or len(user_pop_scale_range) != 2:
+        user_pop_scale_range = (0.5, 1.5)
 
     mlp_layer_sizes = hycfg.get("mlp_layer_sizes", (512, 256, 128))
     if isinstance(mlp_layer_sizes, list):
@@ -758,6 +793,9 @@ def load_hybrid_tail_robust(
         item_popularity=item_popularity,
         pop_alpha=pop_alpha,
         pop_mode=pop_mode,
+        learnable_pop_alpha=learnable_pop_alpha,
+        user_pop_scaling=user_pop_scaling,
+        user_pop_scale_range=tuple(float(x) for x in user_pop_scale_range),
     ).to(device)
 
     incompat = model.load_state_dict(state, strict=False)
@@ -860,8 +898,9 @@ def main():
         cov = compute_item_coverage(recs_items, n_items)
         lt = compute_longtail_share(recs_items, tail_mask)
         nov = compute_novelty(recs_items, item_pop)
-        results.append((tag, rK, nK, cov, lt, nov))
-        print(f"[{tag}] Recall@{K}={rK:.4f} NDCG@{K}={nK:.4f} Cov@{K}={cov:.4f} LT@{K}={lt:.4f} Nov@{K}={nov:.4f}")
+        ilad = compute_ilad(recs_items, item_vec, k=K)
+        results.append((tag, rK, nK, cov, lt, nov, ilad))
+        print(f"[{tag}] Recall@{K}={rK:.4f} NDCG@{K}={nK:.4f} Cov@{K}={cov:.4f} LT@{K}={lt:.4f} Nov@{K}={nov:.4f} ILAD@{K}={ilad:.4f}")
 
     def _eval_base_and_log(tag: str, cand: Dict[int, Tuple[List[int], List[float]]]):
         base_recs = build_base_topk_from_candidates(cand, K=K)
@@ -871,9 +910,10 @@ def main():
         cov = compute_item_coverage(base_recs, n_items)
         lt = compute_longtail_share(base_recs, tail_mask)
         nov = compute_novelty(base_recs, item_pop)
-        results.append((f"{tag}-Base", rK, nK, cov, lt, nov))
+        ilad = compute_ilad(base_recs, item_vec, k=K)
+        results.append((f"{tag}-Base", rK, nK, cov, lt, nov, ilad))
         print(f"[{tag}-Base] Recall@{K}={rK:.4f} NDCG@{K}={nK:.4f} Hit@{N}={hitN:.4f}")
-        print(f"[{tag}-Base] Recall@{K}={rK:.4f} NDCG@{K}={nK:.4f} Cov@{K}={cov:.4f} LT@{K}={lt:.4f} Nov@{K}={nov:.4f}")
+        print(f"[{tag}-Base] Recall@{K}={rK:.4f} NDCG@{K}={nK:.4f} Cov@{K}={cov:.4f} LT@{K}={lt:.4f} Nov@{K}={nov:.4f} ILAD@{K}={ilad:.4f}")
 
     def _rerank(tag: str, cand: Dict[int, Tuple[List[int], List[float]]]):
         weights = get_rerank_weights_from_cfg(cfg, tag)
@@ -1000,8 +1040,18 @@ def main():
         _rerank("HybridTail-Rerank", cand)
     # ========= Save =========
     out_csv = os.path.join(PROJECT_ROOT, "results_v3_ml1m_rerank.csv")
-    df = pd.DataFrame(results, columns=["Model", f"Recall@{K}", f"NDCG@{K}", f"Coverage@{K}", f"LongTailShare@{K}",
-                                        f"Novelty@{K}"])
+    df = pd.DataFrame(
+        results,
+        columns=[
+            "Model",
+            f"Recall@{K}",
+            f"NDCG@{K}",
+            f"Coverage@{K}",
+            f"LongTailShare@{K}",
+            f"Novelty@{K}",
+            f"ILAD@{K}",
+        ],
+    )
     print("\n========== V3 Rerank Results (ML-1M) ==========")
     print(df.to_string(index=False))
     df.to_csv(out_csv, index=False, encoding="utf-8-sig")
