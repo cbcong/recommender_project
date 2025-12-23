@@ -69,13 +69,19 @@ class HybridNCFAcc(HybridNCF):
     def has_align(self) -> bool:
         return bool(self._has_align)
 
-    def align_loss(self, item_idx: torch.LongTensor, temperature: float = 0.2) -> torch.Tensor:
+    def align_loss(
+        self,
+        item_idx: torch.LongTensor,
+        temperature: float = 0.2,
+        sample_size: int | None = None,
+    ) -> torch.Tensor:
         """
         InfoNCE 对齐损失（建议在训练脚本对子采样后调用，避免 O(B^2) 过慢）。
 
         参数:
             item_idx: [B] item indices
             temperature: tau
+            sample_size: 可选，随机子采样一个子批次以降低显存/计算量
         返回:
             标量 loss
         """
@@ -83,6 +89,9 @@ class HybridNCFAcc(HybridNCF):
             return torch.tensor(0.0, device=item_idx.device)
 
         item_idx = item_idx.long()
+        if sample_size is not None and sample_size > 0 and sample_size < item_idx.numel():
+            perm = torch.randperm(item_idx.numel(), device=item_idx.device)[:sample_size]
+            item_idx = item_idx[perm]
 
         # CF 表征（mlp item embedding）
         z_cf = self.item_embedding_mlp(item_idx)  # [B, mlp_dim]
