@@ -6,6 +6,7 @@ HybridNCFTail: 以“长尾/新颖性/覆盖”等 beyond-accuracy 指标优先�
 核心思路（尽量不改 HybridNCF 的结构与训练方式）：
 - 在打分 logits 上加入“流行度惩罚项”，让模型更倾向于推荐长尾物品；
 - 惩罚项形式可控，默认 log(1+pop) 并做归一化；
+- 支持 learnable α、用户级缩放（基于历史平均流行度）与平滑动量，避免惩罚过度震荡；
 - 训练与推理使用同一 score_logits 逻辑，避免 train/test 不一致。
 
 logit' = logit_base - α * g(pop(item))
@@ -38,6 +39,8 @@ class HybridNCFTail(HybridNCF):
         learnable_pop_alpha: bool = False,
         user_pop_scaling: bool = False,
         user_pop_scale_range: tuple[float, float] = (0.5, 1.5),
+        user_pop_pref_momentum: float = 0.0,
+        pop_penalty_cap: Optional[float] = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -45,6 +48,8 @@ class HybridNCFTail(HybridNCF):
         self.pop_mode = str(pop_mode)
         self.user_pop_scaling = bool(user_pop_scaling)
         self.user_pop_scale_range = tuple(user_pop_scale_range)
+        self.user_pop_pref_momentum = float(user_pop_pref_momentum)
+        self.pop_penalty_cap = None if pop_penalty_cap is None else float(pop_penalty_cap)
 
         if learnable_pop_alpha:
             self.pop_alpha = nn.Parameter(torch.tensor(float(pop_alpha), dtype=torch.float32))
@@ -134,7 +139,14 @@ class HybridNCFTail(HybridNCF):
             norm_pop = logp / denom
 
         norm_pop = torch.clamp(norm_pop, min=0.0, max=1.0)
-        self.user_popularity_pref.data.copy_(norm_pop.to(self.user_popularity_pref.device))
+        dest_dev = self.user_popularity_pref.device
+        norm_pop = norm_pop.to(dest_dev)
+
+        if self.user_pop_pref_momentum > 0:
+            mom = float(self.user_pop_pref_momentum)
+            self.user_popularity_pref.mul_(mom).add_(norm_pop * (1.0 - mom))
+        else:
+            self.user_popularity_pref.data.copy_(norm_pop)
 
     def _pop_penalty(self, item_idx: torch.LongTensor, user_idx: Optional[torch.LongTensor] = None) -> torch.Tensor:
         """
@@ -168,6 +180,9 @@ class HybridNCFTail(HybridNCF):
             scale = low + (1.0 - pref) * (high - low)
             scale = torch.clamp(scale, min=min(low, high), max=max(low, high))
             penalty = penalty * scale
+
+        if self.pop_penalty_cap is not None:
+            penalty = torch.clamp(penalty, max=float(self.pop_penalty_cap))
 
         return penalty
 

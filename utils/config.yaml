@@ -75,6 +75,8 @@ hybrid:
   user_pop_scale_range:
   - 0.5
   - 1.5
+  user_pop_pref_momentum: 0.0
+  pop_penalty_cap:
 eval_v3_rerank:
   candidate_N: 200
   topK: 10
@@ -382,3 +384,5 @@ hybrid_tail:
   user_pop_scale_range:
   - 0.5
   - 1.5
+  user_pop_pref_momentum: 0.0
+  pop_penalty_cap:

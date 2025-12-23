@@ -331,6 +331,8 @@ def main():
     learnable_pop_alpha = bool(hy.get("learnable_pop_alpha", False))
     user_pop_scaling = bool(hy.get("user_pop_scaling", False))
     user_pop_scale_range = hy.get("user_pop_scale_range", (0.5, 1.5))
+    user_pop_pref_momentum = float(hy.get("user_pop_pref_momentum", 0.0))
+    pop_penalty_cap = hy.get("pop_penalty_cap", None)
     if not isinstance(user_pop_scale_range, (list, tuple)) or len(user_pop_scale_range) != 2:
         user_pop_scale_range = (0.5, 1.5)
 
@@ -372,6 +374,8 @@ def main():
         learnable_pop_alpha=learnable_pop_alpha,
         user_pop_scaling=user_pop_scaling,
         user_pop_scale_range=tuple(float(x) for x in user_pop_scale_range),
+        user_pop_pref_momentum=user_pop_pref_momentum,
+        pop_penalty_cap=None if pop_penalty_cap is None else float(pop_penalty_cap),
     ).to(device)
 
     # history tensors（上 GPU）
@@ -478,6 +482,8 @@ def main():
         "learnable_pop_alpha": bool(learnable_pop_alpha),
         "user_pop_scaling": bool(user_pop_scaling),
         "user_pop_scale_range": tuple(float(x) for x in user_pop_scale_range),
+        "user_pop_pref_momentum": float(user_pop_pref_momentum),
+        "pop_penalty_cap": None if pop_penalty_cap is None else float(pop_penalty_cap),
     }
     payload_safe = {"state_dict": model.state_dict()}
 
